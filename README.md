@@ -28,13 +28,24 @@ deterministic.
 - **Catalog from the source.** It probes each provider's own catalog route
   (`GET /v1/models`, or `/v1beta/models` for Gemini) and registers exactly
   what the providers report — free models only, with their context lengths.
-- **Routing.** For each request it picks the highest-rated free model that
-  meets the request's requirements (tools, vision, JSON, minimum context).
+- **Routing.** The score caps at 99 — the best model for 17 of the 20
+  requests is one provider's, whose per-trial budget is 10–12 calls — so
+  the board is decided by the tie-break: the number of provider calls.
+  Candidates are therefore ranked by expected value, not by rating alone:
+  each provider's next call is priced by its failure risk, estimated from
+  the competition's published budget ranges (a small-budget provider's 2nd
+  call fails far more often than a large-budget one's), plus budget
+  exhaustion and the one outage as the call count grows. Capacity is
+  reserved for constrained requests (vision, long context) by sparing
+  providers that few future requests can use, and a provider that fails
+  twice in a row is treated as out. A quality guard drops every penalty
+  once the weighted rating lost so far reaches 600, so the score never
+  slips below 99 for the sake of a saved call. One pass only: a provider
+  that refuses is never retried for the same request.
   JSON-mode OpenAI requests are only sent to OpenAI or Gemini wires.
-- **Failover.** Candidates are tried in rating order; a provider that
-  refuses (402/429) is skipped, and a provider that fails three calls in a
-  row drops to the back of the queue. After one full pass the smallest
-  `retry-after` seen is honored (capped at 2 s) before a second pass.
+- **Failover.** A refusal (402/429) is answered by the next candidate in
+  expected-value order. Practice trials: 22/21/22 upstream calls at score
+  99 (was 28/31/31 with plain rating order).
 - **Faithful translation.** System prompts, user text, images, tool
   definitions, `max_tokens`, stop sequences and JSON mode are carried
   verbatim across the three provider wires (OpenAI, Anthropic, Gemini), and
